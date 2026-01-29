@@ -15,7 +15,7 @@ declare global {
   }
 }
 
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = "235669346272-s332av4b0lmn58oid12ojmpggcsbsu8i.apps.googleusercontent.com";
 
 const App: React.FC = () => {
   const store = useStore();
