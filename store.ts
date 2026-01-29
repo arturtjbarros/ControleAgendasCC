@@ -4,6 +4,10 @@ import { Consultant, Appointment, TimeBlock, User, UserRole, GoogleEvent, Appoin
 import { INITIAL_CONSULTANTS } from './constants';
 import { setHours, setMinutes, addDays, startOfWeek, addWeeks } from 'date-fns';
 
+// CONFIGURAÇÃO GOOGLE (Substituir pela sua Client ID do Google Cloud Console)
+const GOOGLE_CLIENT_ID = 'SEU_CLIENT_ID_AQUI.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/calendar.events';
+
 const getStorage = <T>(key: string, defaultValue: T): T => {
   const saved = localStorage.getItem(key);
   if (!saved) return defaultValue;
@@ -41,6 +45,21 @@ export const useStore = () => {
     localStorage.setItem('googleEvents', JSON.stringify(updated.googleEvents));
     localStorage.setItem('users', JSON.stringify(updated.users));
     localStorage.setItem('currentUser', JSON.stringify(updated.currentUser));
+  };
+
+  // Inicializa GAPI para chamadas de Calendário
+  const initGapi = async () => {
+    return new Promise((resolve) => {
+      // @ts-ignore
+      gapi.load('client', async () => {
+        // @ts-ignore
+        await gapi.client.init({
+          clientId: GOOGLE_CLIENT_ID,
+          discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'],
+        });
+        resolve(true);
+      });
+    });
   };
 
   const register = (name: string, email: string, password: string, role: UserRole = 'SALES') => {
@@ -102,7 +121,7 @@ export const useStore = () => {
     save({ consultants: updated });
   };
 
-  const addAppointment = (a: Omit<Appointment, 'id'>) => {
+  const addAppointment = async (a: Omit<Appointment, 'id'>) => {
     const appointmentId = Math.random().toString(36).substr(2, 9);
     const newA = { 
       ...a, 
@@ -110,77 +129,83 @@ export const useStore = () => {
       bookedById: state.currentUser?.id
     };
 
-    // Verificar se o consultor tem Google vinculado para "empurrar" o evento para o Google
     const consultantUser = state.users.find(u => u.consultantId === a.consultantId || u.email === state.consultants.find(c => c.id === a.consultantId)?.email);
     
-    let updatedGoogleEvents = [...state.googleEvents];
+    // Tentar gravar no Google Calendar Real se estiver autenticado
     if (consultantUser?.googleConnected) {
-      const newGoogleEvent: GoogleEvent = {
-        id: `g-push-${appointmentId}`,
-        consultantId: a.consultantId,
-        title: `[TrainerScheduler] ${a.clientName}`,
-        start: new Date(a.start),
-        end: new Date(a.end),
-      };
-      updatedGoogleEvents.push(newGoogleEvent);
+      try {
+        await initGapi();
+        // @ts-ignore
+        const token = localStorage.getItem(`google_token_${consultantUser.id}`);
+        if (token) {
+          // @ts-ignore
+          gapi.client.setToken({ access_token: token });
+          
+          const event = {
+            'summary': `[TrainerScheduler] ${a.clientName}`,
+            'description': `Treinamento agendado via Controle de Agendas CC.`,
+            'start': {
+              'dateTime': a.start.toISOString(),
+              'timeZone': Intl.DateTimeFormat().resolvedOptions().timeZone
+            },
+            'end': {
+              'dateTime': a.end.toISOString(),
+              'timeZone': Intl.DateTimeFormat().resolvedOptions().timeZone
+            }
+          };
+
+          // @ts-ignore
+          await gapi.client.calendar.events.insert({
+            'calendarId': 'primary',
+            'resource': event
+          });
+          console.log("Evento gravado no Google com sucesso!");
+        }
+      } catch (error) {
+        console.error("Erro ao gravar no Google Calendar:", error);
+      }
     }
 
     save({ 
-      appointments: [...state.appointments, newA],
-      googleEvents: updatedGoogleEvents
+      appointments: [...state.appointments, newA]
     });
   };
 
   const removeAppointment = (id: string) => {
     const updated = state.appointments.filter(a => a.id !== id);
-    // Também remover o evento espelhado do Google se existir
-    const updatedGoogleEvents = state.googleEvents.filter(ge => ge.id !== `g-push-${id}`);
-    save({ 
-      appointments: updated,
-      googleEvents: updatedGoogleEvents
-    });
+    save({ appointments: updated });
   };
 
-  const connectGoogle = (userId: string) => {
-    const user = state.users.find(u => u.id === userId);
-    if (!user) return;
-
-    const mockEvents: GoogleEvent[] = [];
-    const targetConsultantId = user.consultantId || state.consultants.find(c => c.email === user.email)?.id;
-    
-    if (targetConsultantId) {
-      for (let week = 0; week < 4; week++) {
-        const weekStart = addWeeks(startOfWeek(new Date(), { weekStartsOn: 1 }), week);
-        
-        mockEvents.push({
-          id: `g-${week}-1`,
-          consultantId: targetConsultantId,
-          title: "Reunião de Time (Google)",
-          start: setMinutes(setHours(addDays(weekStart, 1), 9), 0),
-          end: setMinutes(setHours(addDays(weekStart, 1), 11), 0),
-        });
-
-        mockEvents.push({
-          id: `g-${week}-2`,
-          consultantId: targetConsultantId,
-          title: "Check-in Projeto (Google)",
-          start: setMinutes(setHours(addDays(weekStart, 3), 14), 30),
-          end: setMinutes(setHours(addDays(weekStart, 3), 16), 0),
-        });
-      }
-    }
-
-    const updatedUsers = state.users.map(u => 
-      u.id === userId ? { ...u, googleConnected: true } : u
-    );
-    const updatedCurrentUser = state.currentUser?.id === userId 
-      ? { ...state.currentUser, googleConnected: true } 
-      : state.currentUser;
-      
-    save({ 
-      users: updatedUsers, 
-      currentUser: updatedCurrentUser,
-      googleEvents: [...state.googleEvents, ...mockEvents]
+  const connectGoogle = async (userId: string) => {
+    return new Promise((resolve, reject) => {
+      // @ts-ignore
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: SCOPES,
+        callback: async (response: any) => {
+          if (response.error !== undefined) {
+            reject(response);
+            return;
+          }
+          
+          // Guardar token para uso futuro
+          localStorage.setItem(`google_token_${userId}`, response.access_token);
+          
+          const updatedUsers = state.users.map(u => 
+            u.id === userId ? { ...u, googleConnected: true } : u
+          );
+          const updatedCurrentUser = state.currentUser?.id === userId 
+            ? { ...state.currentUser, googleConnected: true } 
+            : state.currentUser;
+            
+          save({ 
+            users: updatedUsers, 
+            currentUser: updatedCurrentUser
+          });
+          resolve(true);
+        },
+      });
+      client.requestAccessToken();
     });
   };
 
