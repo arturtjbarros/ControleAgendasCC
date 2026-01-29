@@ -10,7 +10,7 @@ import {
   isSameDay, 
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Plus, Info, AlertTriangle, Calendar as CalendarIcon, ExternalLink } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, Info, AlertTriangle, Calendar as CalendarIcon, ExternalLink, Loader2, Check } from 'lucide-react';
 import { Consultant, Appointment, AppointmentStatus, User, GoogleEvent } from '../types';
 
 interface WeeklySchedulerProps {
@@ -33,6 +33,7 @@ const WeeklyScheduler: React.FC<WeeklySchedulerProps> = ({
   const [currentDate, setCurrentDate] = useState(new Date());
   const [bookingDetails, setBookingDetails] = useState<{ date: Date; period: Period; consultantId?: string } | null>(null);
   const [clientName, setClientName] = useState('');
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const startDate = startOfWeek(currentDate, { weekStartsOn: 1 });
   const endDate = addDays(startDate, 4); // Seg a Sex
@@ -78,13 +79,19 @@ const WeeklyScheduler: React.FC<WeeklySchedulerProps> = ({
   const handleBookingClick = (date: Date, period: Period, consultantId: string) => {
     setBookingDetails({ date, period, consultantId });
     setClientName('');
+    setIsSyncing(false);
   };
 
-  const confirmBooking = (e: React.FormEvent) => {
+  const confirmBooking = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bookingDetails || !bookingDetails.consultantId || !clientName) return;
 
     const range = getPeriodRange(bookingDetails.date, bookingDetails.period);
+    const selectedConsultant = consultants.find(c => c.id === bookingDetails.consultantId);
+    
+    setIsSyncing(true);
+    // Simular o tempo de rede para gravar no Google
+    await new Promise(resolve => setTimeout(resolve, 1200));
 
     onAddAppointment({
       consultantId: bookingDetails.consultantId,
@@ -95,6 +102,7 @@ const WeeklyScheduler: React.FC<WeeklySchedulerProps> = ({
       status: AppointmentStatus.SCHEDULED,
     });
 
+    setIsSyncing(false);
     setBookingDetails(null);
   };
 
@@ -189,7 +197,10 @@ const WeeklyScheduler: React.FC<WeeklySchedulerProps> = ({
                           >
                             <div className="flex items-center justify-between mb-0.5">
                               <span className="text-[10px] font-bold uppercase opacity-80 truncate">{consultant.name}</span>
-                              <Info size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                              <div className="flex items-center space-x-1">
+                                {currentUser?.googleConnected && <Check size={8} className="text-white opacity-80" title="Sincronizado com Google" />}
+                                <Info size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+                              </div>
                             </div>
                             <span className="text-xs font-bold truncate">{app.clientName}</span>
                           </div>
@@ -238,7 +249,7 @@ const WeeklyScheduler: React.FC<WeeklySchedulerProps> = ({
         </div>
       </div>
 
-      {/* Simple Booking Modal */}
+      {/* Booking Modal */}
       {bookingDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm transition-all">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
@@ -250,7 +261,7 @@ const WeeklyScheduler: React.FC<WeeklySchedulerProps> = ({
                 </p>
               </div>
               <div className="h-10 w-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600">
-                <Plus size={24} />
+                {isSyncing ? <Loader2 size={24} className="animate-spin" /> : <Plus size={24} />}
               </div>
             </div>
             <form onSubmit={confirmBooking} className="p-6 space-y-5">
@@ -268,28 +279,43 @@ const WeeklyScheduler: React.FC<WeeklySchedulerProps> = ({
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 ml-1">Cliente / Empresa</label>
                 <input 
                   required
+                  disabled={isSyncing}
                   autoFocus
                   type="text" 
                   value={clientName}
                   onChange={e => setClientName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all placeholder:text-slate-300 font-medium"
+                  className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all placeholder:text-slate-300 font-medium disabled:opacity-50"
                   placeholder="Nome do cliente ou empresa"
                 />
               </div>
 
+              {currentUser?.googleConnected && (
+                <div className="flex items-center space-x-2 text-emerald-600 text-[10px] font-bold uppercase">
+                  <Check size={14} />
+                  <span>Será adicionado à sua agenda Google automaticamente</span>
+                </div>
+              )}
+
               <div className="pt-2 flex space-x-3">
                 <button 
                   type="button"
+                  disabled={isSyncing}
                   onClick={() => setBookingDetails(null)}
-                  className="flex-1 px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold transition-all"
+                  className="flex-1 px-4 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold transition-all disabled:opacity-50"
                 >
                   Cancelar
                 </button>
                 <button 
                   type="submit"
-                  className="flex-2 px-6 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-all active:scale-95"
+                  disabled={isSyncing}
+                  className="flex-2 px-6 py-3 rounded-xl bg-blue-600 text-white hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-all active:scale-95 disabled:opacity-80 flex items-center justify-center"
                 >
-                  Agendar Período
+                  {isSyncing ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin mr-2" />
+                      Gravando no Google...
+                    </>
+                  ) : 'Agendar Período'}
                 </button>
               </div>
             </form>
