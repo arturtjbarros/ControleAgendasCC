@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import Layout from './components/Layout';
 import DashboardView from './components/DashboardView';
 import WeeklyScheduler from './components/WeeklyScheduler';
@@ -7,47 +7,13 @@ import TeamView from './components/TeamView';
 import AuthView from './components/AuthView';
 import { ViewType, User } from './types';
 import { useStore } from './store';
-import { Calendar, CheckCircle2, RefreshCw, Smartphone, User as UserIcon, Loader2, AlertCircle, ShieldAlert } from 'lucide-react';
-
-declare global {
-  interface Window {
-    google: any;
-  }
-}
-
-const GOOGLE_CLIENT_ID = "235669346272-s332av4b0lmn58oid12ojmpggcsbsu8i.apps.googleusercontent.com";
+import { Calendar, CheckCircle2, RefreshCw, Smartphone, User as UserIcon, Loader2, AlertCircle } from 'lucide-react';
 
 const App: React.FC = () => {
   const store = useStore();
   const [activeView, setActiveView] = useState<ViewType>('dashboard');
   const [isSyncing, setIsSyncing] = useState(false);
-  const [tokenClient, setTokenClient] = useState<any>(null);
-
-  useEffect(() => {
-    // Initialize Google Identity Services Client
-    const initGsi = () => {
-      if (typeof window.google !== 'undefined' && window.google.accounts) {
-        const client = window.google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: 'https://www.googleapis.com/auth/calendar.events.readonly',
-          callback: (tokenResponse: any) => {
-            if (tokenResponse && tokenResponse.access_token) {
-              handleSyncWithToken(tokenResponse.access_token);
-            }
-          },
-        });
-        setTokenClient(client);
-      }
-    };
-
-    const interval = setInterval(() => {
-      if (window.google) {
-        initGsi();
-        clearInterval(interval);
-      }
-    }, 100);
-    return () => clearInterval(interval);
-  }, []);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   if (!store.currentUser) {
     return <AuthView store={store} onAuth={() => {}} />;
@@ -55,38 +21,16 @@ const App: React.FC = () => {
 
   const user = store.currentUser;
 
-  const handleSyncWithToken = async (token: string) => {
-    setIsSyncing(true);
-    await store.connectGoogle(user.id, token);
-    setIsSyncing(false);
-  };
-
   const handleConnectGoogle = async () => {
-    if (tokenClient) {
-      // In a real production app, this would open a popup.
-      // Since origins are restricted in sandboxes, we wrap it in a try-catch 
-      // and provide a fallback demo sync if the real popup fails to load or origin is unauthorized.
-      try {
-        tokenClient.requestAccessToken();
-      } catch (e) {
-        console.warn("GSI request failed - likely origin restriction. Falling back to simulated sync.");
-        setIsSyncing(true);
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        store.connectGoogle(user.id);
-        setIsSyncing(false);
-      }
-    } else {
-      // Fallback for demo when GSI script isn't loaded or config is missing
-      setIsSyncing(true);
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      store.connectGoogle(user.id);
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      await store.connectGoogle(user.id);
+    } catch (err) {
+      console.error(err);
+      setSyncError("Não foi possível conectar ao Google. Verifique se o domínio está autorizado.");
+    } finally {
       setIsSyncing(false);
-    }
-  };
-
-  const handleDisconnectGoogle = () => {
-    if (confirm('Deseja realmente desconectar sua agenda do Google? Os eventos externos não serão mais exibidos.')) {
-      store.disconnectGoogle(user.id);
     }
   };
 
@@ -216,68 +160,44 @@ const App: React.FC = () => {
                          Integração Google Calendar
                       </h3>
                       <p className="text-sm font-medium text-slate-500 mb-6">
-                         Vincule sua agenda do Google para permitir que o sistema detecte conflitos e bloqueie seus horários ocupados automaticamente.
+                         Vincule sua agenda do Google para que os treinamentos marcados aqui apareçam **automaticamente** em seu calendário pessoal.
                       </p>
                       
+                      {syncError && (
+                        <div className="mb-4 p-4 bg-red-50 text-red-600 rounded-2xl flex items-center text-xs font-bold border border-red-100">
+                           <AlertCircle size={16} className="mr-2" />
+                           {syncError}
+                        </div>
+                      )}
+
                       {user.googleConnected ? (
-                        <div className="space-y-4">
-                          <div className="p-6 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
-                             <div className="flex items-center">
-                                <div className="w-12 h-12 bg-emerald-500 text-white rounded-2xl flex items-center justify-center mr-4 shadow-lg shadow-emerald-100">
-                                   <CheckCircle2 size={24} />
-                                </div>
-                                <div>
-                                   <p className="text-emerald-900 font-black leading-none mb-1">Google Calendar Conectado</p>
-                                   <p className="text-emerald-600 text-[10px] font-bold uppercase tracking-wider">
-                                     {user.lastSync ? `Última sincronização: ${new Date(user.lastSync).toLocaleString('pt-BR')}` : 'Sincronizado'}
-                                   </p>
-                                </div>
-                             </div>
-                             <div className="flex flex-col items-end space-y-2">
-                                <button 
-                                  onClick={handleConnectGoogle}
-                                  className="text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:text-blue-600 flex items-center"
-                                >
-                                  <RefreshCw size={12} className={`mr-1 ${isSyncing ? 'animate-spin' : ''}`} /> Atualizar
-                                </button>
-                                <button 
-                                  onClick={handleDisconnectGoogle}
-                                  className="text-[10px] font-black uppercase tracking-widest text-red-400 hover:text-red-600"
-                                >
-                                  Desconectar
-                                </button>
-                             </div>
-                          </div>
-                          {store.googleEvents.length > 0 && (
-                            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
-                              <span className="text-xs font-bold text-slate-500">Eventos Externos Importados:</span>
-                              <span className="text-xs font-black text-blue-600">{store.googleEvents.filter(e => e.consultantId === (user.consultantId || store.consultants[0].id)).length} eventos</span>
-                            </div>
-                          )}
+                        <div className="p-6 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
+                           <div className="flex items-center">
+                              <div className="w-12 h-12 bg-emerald-500 text-white rounded-2xl flex items-center justify-center mr-4 shadow-lg shadow-emerald-100">
+                                 <CheckCircle2 size={24} />
+                              </div>
+                              <div>
+                                 <p className="text-emerald-900 font-black leading-none mb-1">Conta Real Conectada</p>
+                                 <p className="text-emerald-600 text-xs font-bold">Gravação em tempo real ativa</p>
+                              </div>
+                           </div>
+                           <button className="text-[10px] font-black uppercase tracking-widest text-emerald-700 hover:underline">Desconectar</button>
                         </div>
                       ) : (
-                        <div className="space-y-4">
-                          <button 
-                            disabled={isSyncing}
-                            onClick={handleConnectGoogle}
-                            className="w-full py-4 bg-white border-2 border-slate-100 hover:border-blue-500 rounded-2xl flex items-center justify-center space-x-3 transition-all group shadow-sm hover:shadow-md disabled:opacity-50"
-                          >
-                             {isSyncing ? (
-                               <Loader2 className="animate-spin text-blue-600" size={20} />
-                             ) : (
-                               <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-                             )}
-                             <span className="font-black text-slate-700 group-hover:text-blue-600">
-                               {isSyncing ? 'Autenticando...' : 'Autorizar Acesso ao Calendar'}
-                             </span>
-                          </button>
-                          <div className="flex items-start p-4 bg-amber-50 rounded-xl border border-amber-100">
-                            <ShieldAlert size={16} className="text-amber-500 mt-0.5 mr-3 flex-shrink-0" />
-                            <p className="text-[10px] font-bold text-amber-600 leading-relaxed uppercase tracking-tight">
-                              Segurança: Solicitamos apenas permissão de leitura para identificar horários ocupados. Seus dados nunca são compartilhados ou alterados no Google.
-                            </p>
-                          </div>
-                        </div>
+                        <button 
+                          disabled={isSyncing}
+                          onClick={handleConnectGoogle}
+                          className="w-full py-4 bg-white border-2 border-slate-100 hover:border-blue-500 rounded-2xl flex items-center justify-center space-x-3 transition-all group shadow-sm hover:shadow-md disabled:opacity-50"
+                        >
+                           {isSyncing ? (
+                             <Loader2 className="animate-spin text-blue-600" size={20} />
+                           ) : (
+                             <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
+                           )}
+                           <span className="font-black text-slate-700 group-hover:text-blue-600">
+                             {isSyncing ? 'Autenticando...' : 'Autorizar Sincronização Google'}
+                           </span>
+                        </button>
                       )}
                    </div>
 
